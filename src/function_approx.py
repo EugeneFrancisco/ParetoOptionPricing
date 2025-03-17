@@ -33,7 +33,7 @@ class LinearApprox:
         returns:
             nothing, just updates the weights of the current linear approximation.
         '''
-        self.weights = self.weights - self.learning_rate * x.T @ (hyp - labels)/ x.shape[0]
+        self.weights = self.weights - self.learning_rate * x.T @ (hyp - labels) / x.shape[0]
 
 
     
