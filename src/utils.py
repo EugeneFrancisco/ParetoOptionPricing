@@ -3,6 +3,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from abc import ABC, abstractmethod
 from distributions import Distribution
+import torch
+from state import state
+
+#def choose_epsilon_greedy( q_function: Callable, state:  
 
 def produce_trace(config: Mapping, distribution: Distribution)-> Iterable[float]:
     '''
@@ -56,5 +60,26 @@ def step_minibatch(
     mean = distribution.mean
     new_prices = start_price + start_price*(driftRate*timeGap + (distribution.sample_n(batch_size) - mean) * timeGap)
     return new_prices
+
+def MSE_loss(predictions: torch.Tensor, target: torch.Tensor) -> float:
+    '''
+    Computes the mean squared error loss for the predicted Q values and the true Q values.
+    args:
+        predictions: a torch.Tensor of shape (n, alpha) representing the predicted Q values, where n is the
+        batch size and alpha is the number of actions.
+        target: a torch.Tensor of shape (n, alpha) representing the true Q values. Note that for each row of
+        target, only one entry is non-zero, corresponding to the action taken.
+        The non-zero entry should be the target Q value for the action taken.
+        The rest should be zero.
+    returns:
+        The mean squared error between the target Q value and the associated prediction value.
+    '''
+
+    nonzero_indices = target.nonzero(as_tuple=True)
+    pred_q_values = predictions[nonzero_indices]
+    target_q_values = target[nonzero_indices]
+    loss = torch.mean((pred_q_values - target_q_values) ** 2)
+    return loss.item()
+
 
     
