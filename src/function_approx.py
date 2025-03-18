@@ -1,6 +1,8 @@
 import numpy as np
 from utils import MSE_loss
 import torch
+from abc import ABC, abstractmethod
+from state import state
 
 
 class LinearApprox:
@@ -65,6 +67,23 @@ class SimpleNNApprox:
 
         self.model.to(self.device)
     
+    def featurize(self, currentState: state) -> torch.Tensor:
+        '''
+        Featurizes the current state into a torch.Tensor.
+        args:
+            currentState: a state object representing the current state of the system.
+        returns:
+            a torch.Tensor of shape (1, 5) representing the featurized state.
+        '''
+        return torch.tensor([
+            1,
+            currentState.time,
+            currentState.price,
+            currentState.time ** 2,
+            currentState.price ** 2,
+            currentState.time * currentState.price
+        ])[None, :].to(self.device)
+    
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         '''
         args:
@@ -98,6 +117,33 @@ class SimpleNNApprox:
         loss.backward()
         self.optimizer.step()
         return loss
+    
+    def __call__(self, currentState: state) -> np.ndarray:
+        '''
+        Computes the Q values for the given state.
+        args:
+            currentState: a state object representing the current state of the system.
+        returns:
+            a numpy array of shape (2,1) representing the Q values for each action. Note that
+            index 0 corresponds to holding and index 1 corresponds to executing'
+        '''
+        self.model.eval()
+        with torch.no_grad():
+            x = self.featurize(currentState)
+            q_values = self.forward(x)
+            return q_values
+
+class DummyQApprox:
+    def __call__(self, currentState: state) -> np.ndarray:
+        '''
+        Computes the Q values for the given state.
+        args:
+            currentState: a state object representing the current state of the system.
+        returns:
+            a numpy array of shape (2,1) representing the Q values for each action. For testing
+            we always return that holding is higher quality than executing.
+        '''
+        return torch.tensor([[1], [0]])
 
 
 
