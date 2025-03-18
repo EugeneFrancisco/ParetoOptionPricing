@@ -5,5 +5,6 @@ class state:
     '''
     Represents a state in the MDP
     '''
-    time: int # the time till expiration
-    price: float
+    time: int = 0 # the time till expiration
+    price: float = 0
+    terminal: bool = False
