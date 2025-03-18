@@ -6,7 +6,21 @@ from distributions import Distribution
 import torch
 from state import state
 
-#def choose_epsilon_greedy( q_function: Callable, state:  
+def choose_epsilon_greedy( q_values: torch.Tensor, epsilon: float) -> int:
+    '''
+    Chooses an action using epsilon-greedy policy
+    args:
+        q_values: a torch.Tensor of shape (2,1) representing the Q values for each action.
+        epsilon: the probability of choosing a random action.
+    returns:
+        An integer representing the chosen action. 0 corresponds to holding and 1 corresponds to executing.
+        This is also the index at which that action appears within the q_values tensor.
+    '''
+
+    if np.random.rand() < epsilon:
+        return np.random.randint(0, 2)
+    else:
+        return torch.argmax(q_values).item()
 
 def produce_trace(config: Mapping, distribution: Distribution)-> Iterable[float]:
     '''
