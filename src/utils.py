@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from abc import ABC, abstractmethod
 from distributions import Distribution
 import torch
+import math
 from state import state
 
 def choose_epsilon_greedy( q_values: torch.Tensor, epsilon: float) -> int:
@@ -32,54 +33,28 @@ def choose_greedy(q_values: torch.Tensor) -> int:
     '''
     return torch.argmax(q_values).item()
 
-def make_experience_trace(config: Mapping, distribution: Distribution, QFunctionApprox) -> Iterable[tuple]:
+def featurize(currentState: state) -> torch.Tensor:
     '''
-    Produces a trace of experiences based on the given configuration.
+    Featurizes the current state into a torch.Tensor.
     args:
-        config: A dictionary containing the configuration for the trace. Must have the keys
-            'start_price' (float), the key 'start_time' (int) which is the time till expiration that this trace begins at,
-            and the key 'strike_price' (float).
-            Optional key 'driftRate' (float) can be provided. 
-            'timeGap' (float) is also optional and defaults to 1.0.
-        distribution: A Distribution object that provides the price dynamics. Namely, distribution has
-            a sample method which is proportional to the change in price.
-            The mean is also stored in the distributin object.
-        QFunctionApprox: A function approximation object that provides the current estimate of the
-            Q values for each state-action pair. We need this to choose the next action epsilon greedily.
+        currentState: a state object representing the current state of the system.
+    returns:
+        a torch.Tensor of shape (1, 6) representing the featurized state. Note that the returned tensor
+        is on the same device as the model. The features are:
+        [1, time, log(price), time^2, log(price)^2, time * log(price)]
     '''
-    start_price = config['start_price']
-    start_time = config['start_time']
-    strike_price = config['strike_price']
-    driftRate = config.get('driftRate', 0.0)
-    timeGap = config.get('timeGap', 1.0)
 
-    mean = distribution.mean
+    time_horizon = 100
+    price_horizon = 100
 
-    while True:
-
-        current_state = state(time = start_time, price = start_price)
-        q_values = QFunctionApprox(current_state)
-        #action = choose_epsilon_greedy(q_values, epsilon=0.1)
-        action = choose_greedy(q_values)
-
-        if start_time == 0 or action == 1:
-            # the terminal state.
-            # we have to check if we entered because date expired or because we chose to execute.
-            print("AHHHHHH")
-            reward = 0 if action == 0 else start_price - strike_price
-            next_state = state(terminal = True)
-            return [(current_state, action, reward, next_state)]
-        
-        price_change = start_price*(driftRate * timeGap + (distribution.sample() - mean) * timeGap)
-        new_price = price_change + start_price
-        new_time = start_time - timeGap
-        new_state = state(time = new_time, price = new_price)
-        reward = 0
-        yield (current_state, action, reward, new_state)
-        start_time = new_time
-        start_price = new_price
-
-        
+    return torch.tensor([
+        1,
+        currentState.time/time_horizon,
+        currentState.price/price_horizon,
+        (currentState.time/time_horizon) ** 2,
+        (currentState.price/price_horizon) ** 2,
+        (currentState.time * currentState.price)/(time_horizon * price_horizon)
+    ]).unsqueeze(0)
 
 
 def produce_trace(config: Mapping, distribution: Distribution)-> Iterable[float]:
@@ -153,7 +128,22 @@ def MSE_loss(predictions: torch.Tensor, target: torch.Tensor) -> float:
     pred_q_values = predictions[nonzero_indices]
     target_q_values = target[nonzero_indices]
     loss = torch.mean((pred_q_values - target_q_values) ** 2)
-    return loss.item()
+    return loss
 
+def epsilon_scheduler(initial_epsilon: float, decay_rate: float, min_epsilon: float) -> Iterable[float]:
+    '''
+    Computes the epsilon value for the given epoch using an exponential decay schedule.
+    args:
+        initial_epsilon: The initial value of epsilon.
+        decay_rate: The rate at which epsilon decays.
+        min_epsilon: The minimum value of epsilon.
+        epoch: The current epoch.
+    returns:
+        The epsilon value for the given epoch.
+    '''
+    count = 0
+    while True:
+        yield max(min_epsilon, initial_epsilon * decay_rate ** count)
+        count += 1
 
     
