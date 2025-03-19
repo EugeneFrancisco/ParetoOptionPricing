@@ -1,5 +1,5 @@
 import numpy as np
-from utils import MSE_loss
+from utils import MSE_loss, featurize
 import torch
 from abc import ABC, abstractmethod
 from state import state
@@ -55,7 +55,7 @@ class SimpleNNApprox:
         print("Using device:", self.device)
         
         self.model = torch.nn.Sequential(
-            torch.nn.Linear(5, 10),
+            torch.nn.Linear(6, 10),
             torch.nn.ReLU(),
             torch.nn.Linear(10, 10),
             torch.nn.ReLU(),
@@ -66,23 +66,6 @@ class SimpleNNApprox:
         self.loss_fn = MSE_loss
 
         self.model.to(self.device)
-    
-    def featurize(self, currentState: state) -> torch.Tensor:
-        '''
-        Featurizes the current state into a torch.Tensor.
-        args:
-            currentState: a state object representing the current state of the system.
-        returns:
-            a torch.Tensor of shape (1, 5) representing the featurized state.
-        '''
-        return torch.tensor([
-            1,
-            currentState.time,
-            currentState.price,
-            currentState.time ** 2,
-            currentState.price ** 2,
-            currentState.time * currentState.price
-        ])[None, :].to(self.device)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         '''
@@ -108,8 +91,6 @@ class SimpleNNApprox:
         returns:
             the loss computed using the MSE loss function.
         '''
-        x = x.to(self.device)
-        targets = targets.to(self.device)
         self.model.train()
         self.optimizer.zero_grad()
         predictions = self.forward(x)
@@ -129,7 +110,7 @@ class SimpleNNApprox:
         '''
         self.model.eval()
         with torch.no_grad():
-            x = self.featurize(currentState)
+            x = featurize(currentState)
             q_values = self.forward(x)
             return q_values
 
