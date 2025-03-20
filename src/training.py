@@ -11,6 +11,11 @@ from tqdm import tqdm
 from state import state
 import concurrent.futures
 
+BATCH_SIZE = 1000
+NUM_EXPERIENCES = 4000
+NUM_ITERATIONS = 800
+GAMMA = 1/1.005
+
 if torch.backends.mps.is_available():
     train_device = torch.device("mps")
 else:
@@ -18,13 +23,7 @@ else:
 
 default_device = torch.device("cpu")
 
-GAMMA = 1/1.005
-
-distribution = NegatedParetoDistribution(scale = 0.03, alpha = 2.0)
-
-QFunctionApprox = SimpleNNApprox(learning_rate=0.01)
-
-def make_experience_trace(config: Mapping, distribution: Distribution, QFunctionApprox) -> Iterable[tuple]:
+def make_experience_trace(config: Mapping, distribution: Distribution, QFunctionApprox, fixed_K = True) -> Iterable[tuple]:
     '''
     Produces a trace of experiences based on the given configuration.
     args:
@@ -41,7 +40,7 @@ def make_experience_trace(config: Mapping, distribution: Distribution, QFunction
     '''
     start_price = config['start_price']
     start_time = config['start_time']
-    strike_price = config['strike_price']
+    strike_price = config['strike_price'] 
     epsilon = config['epsilon']
     driftRate = config.get('driftRate', 0.0)
     timeGap = config.get('timeGap', 1.0)
@@ -57,7 +56,7 @@ def make_experience_trace(config: Mapping, distribution: Distribution, QFunction
 
         action = choose_epsilon_greedy(q_values, epsilon)
 
-        x = featurize(current_state)
+        x = featurize(current_state, fixed_K)
         target = torch.zeros((1, 2))
 
         if start_time == 0 or action == 1:
@@ -90,37 +89,51 @@ def make_experience_trace(config: Mapping, distribution: Distribution, QFunction
 
     return X, targets
 
-# time_upper_bounds = [20, 30, 40, 50, 60, 70, 80, 90, 100, 100, 100, 100, 100, 100, 100]
-# time_lower_bounds = [1, 1, 1, 1, 1, 1, 1, 20, 30, 40, 60, 70, 80, 80, 90]
+def make_data_loader(config, distribution, QFunctionApprox, iteration, fixed_K = True):
+    '''
+    Makes a data loader by sampling experience traces for the given distribution and QFunctionApprox.
+    iteration is used for any schedulers.
+    '''
+    time_upper_bound = [20, 40]
+    time_lower_bound = [1, 1]
+    eps_scheduler = epsilon_scheduler(0.1, 0.995, 0.01)
 
-eps_scheduler = epsilon_scheduler(0.1, 0.995, 0.01)
-for i in range(500):
 
     epsilon = next(eps_scheduler)
-    schedule = int(i/10)
+    schedule = iteration/800
+
+    if schedule < 0.5:
+        up = time_upper_bound[0]
+        low = time_lower_bound[0]
+    else:
+        up = time_upper_bound[1]
+        low = time_lower_bound[1]
+
+
     X_list = [] # an n by d array of states that we've seen, where n is the number of states and d is the feature dimension of the states.
 
     # an n by 2 array of targets for each state in X, where n is the number of states and 2 is the number of actions.
     # Each row corresponds to one state's target Q values; the action is implied by the column index. 
     
     targets_list = [] 
+
     num_examples = 0
     QFunctionApprox.model.eval()
     QFunctionApprox.model.to(default_device)
 
-    with tqdm(total=3000, desc="Collecting Experience", unit="samples") as pbar:
-        while num_examples < 3000:
+    with tqdm(total=NUM_EXPERIENCES, desc="Collecting Experience", unit="samples") as pbar:
+        while num_examples < NUM_EXPERIENCES:
             tasks = [{
                 'start_price': np.random.uniform(1, 21),
-                'start_time': np.random.randint(1, 11),
-                'strike_price': 10,
+                'start_time': np.random.randint(low, up),
+                'strike_price': config['strike_price'] if fixed_K else np.random.uniform(1, 21),
                 'driftRate': 0.005,
                 'timeGap': 1,
                 'epsilon': epsilon
             } for _ in range(36)]
 
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(make_experience_trace, config, distribution, QFunctionApprox) for config in tasks]
+                futures = [executor.submit(make_experience_trace, sampledConfig, distribution, QFunctionApprox, fixed_K) for sampledConfig in tasks]
                 results = [future.result() for future in concurrent.futures.as_completed(futures)]
             
             for XBatch, targetsBatch in results:
@@ -133,25 +146,44 @@ for i in range(500):
     QFunctionApprox.model.to(train_device)
     X = torch.cat(X_list, dim=0).to(train_device)
     targets = torch.cat(targets_list, dim=0).to(train_device)
-
     dataset = TensorDataset(X, targets)
-    batch_size = 1000
+    data_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
 
-    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    
-    total_loss = 0
-    count = 0
-
-    progress_bar = tqdm(data_loader, desc="Training Progress")
-
-    for x, target in progress_bar:
-        count += 1
-        loss = QFunctionApprox.backward(x, target)
-        total_loss += loss.item()
-        progress_bar.set_postfix(loss=loss.item())
-    
-    if i % 5 == 0:
-        print(f"Iteration {i}: Loss = {total_loss / count}")
+    return data_loader
     
 
-torch.save(QFunctionApprox.model.state_dict(), 'results/model.pth')
+def q_learning_fixed_K(config, QFunctionApprox):
+
+    distribution = NegatedParetoDistribution(scale = 0.03, alpha = config['alpha'])
+
+    for i in range(NUM_ITERATIONS):
+        
+        data_loader = make_data_loader(config, distribution, QFunctionApprox, i)
+
+        total_loss = 0
+        count = 0
+
+        progress_bar = tqdm(data_loader, desc="Training Progress")
+
+        for x, target in progress_bar:
+            count += 1
+            loss = QFunctionApprox.backward(x, target)
+            total_loss += loss.item()
+            progress_bar.set_postfix(loss=loss.item())
+        
+        if i % 5 == 0:
+            print(f"Iteration {i}: Loss = {total_loss / count}")
+    torch.save(QFunctionApprox.model.state_dict(), 'results/model.pth')
+
+QFunctionApprox = SimpleNNApprox(learning_rate=0.01)
+
+config = {
+    'strike_price': 5.0,
+    'alpha': 2.0
+}
+
+q_learning_fixed_K(config, QFunctionApprox)
+
+
+
+    
