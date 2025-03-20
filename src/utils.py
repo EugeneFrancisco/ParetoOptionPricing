@@ -33,7 +33,7 @@ def choose_greedy(q_values: torch.Tensor) -> int:
     '''
     return torch.argmax(q_values).item()
 
-def featurize(currentState: state) -> torch.Tensor:
+def featurize(currentState: state, strike_price: float = None, alpha: float = None) -> torch.Tensor:
     '''
     Featurizes the current state into a torch.Tensor.
     args:
@@ -44,10 +44,31 @@ def featurize(currentState: state) -> torch.Tensor:
         [time, price]
     '''
 
+    if strike_price is None and alpha is None:
+        return torch.tensor([
+            currentState.time,
+            currentState.price
+        ]).unsqueeze(0)
+    
+    if strike_price is not None and alpha is None:
+        return torch.tensor([
+            currentState.time,
+            currentState.price,
+            strike_price
+        ]).unsqueeze(0)
+    
+    if strike_price is None and alpha is not None:
+        return torch.tensor([
+            currentState.time,
+            currentState.price,
+            alpha
+        ]).unsqueeze(0)
     
     return torch.tensor([
         currentState.time,
-        currentState.price
+        currentState.price,
+        strike_price,
+        alpha
     ]).unsqueeze(0)
 
 def MSE_loss(predictions: torch.Tensor, target: torch.Tensor) -> float:
