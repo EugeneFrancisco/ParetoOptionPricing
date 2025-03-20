@@ -55,13 +55,13 @@ class SimpleNNApprox:
         print("Using device:", self.device)
         
         self.model = torch.nn.Sequential(
-            torch.nn.Linear(2, 10),
+            torch.nn.Linear(2, 30),
             torch.nn.ReLU(),
-            torch.nn.Linear(10, 10),
+            torch.nn.Linear(30, 60),
             torch.nn.ReLU(),
-            torch.nn.Linear(10, 10),
+            torch.nn.Linear(60, 30),
             torch.nn.ReLU(),
-            torch.nn.Linear(10, 2)
+            torch.nn.Linear(30, 2)
         )
         self.learning_rate = learning_rate
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
