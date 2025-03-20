@@ -41,7 +41,7 @@ class LinearApprox:
         self.weights = self.weights - self.learning_rate * x.T @ (hyp - labels) / x.shape[0]
 
 class SimpleNNApprox:
-    def __init__(self, learning_rate: float):
+    def __init__(self, learning_rate: float, fixed_K: bool = True, fixed_alpha: bool = True):
         '''
         Initializes a simple two layer neural network function approximator of the Q function. 
         args:
@@ -54,15 +54,41 @@ class SimpleNNApprox:
         
         print("Using device:", self.device)
         
-        self.model = torch.nn.Sequential(
-            torch.nn.Linear(2, 30),
-            torch.nn.ReLU(),
-            torch.nn.Linear(30, 60),
-            torch.nn.ReLU(),
-            torch.nn.Linear(60, 30),
-            torch.nn.ReLU(),
-            torch.nn.Linear(30, 2)
-        )
+        if fixed_alpha:
+            self.model = torch.nn.Sequential(
+                torch.nn.Linear(2, 30),
+                torch.nn.ReLU(),
+                torch.nn.Linear(30, 60),
+                torch.nn.ReLU(),
+                torch.nn.Linear(60, 30),
+                torch.nn.ReLU(),
+                torch.nn.Linear(30, 15),
+                torch.nn.ReLU(),
+                torch.nn.Linear(15, 2)
+            )
+        elif fixed_K and not fixed_alpha:
+            self.model = torch.nn.Sequential(
+                torch.nn.Linear(3, 40),
+                torch.nn.ReLU(),
+                torch.nn.Linear(40, 80),
+                torch.nn.ReLU(),
+                torch.nn.Linear(80, 40),
+                torch.nn.ReLU(),
+                torch.nn.Linear(40, 2)
+            )
+        elif not fixed_K and not fixed_alpha:
+            self.model = torch.nn.Sequential(
+                torch.nn.Linear(4, 40),
+                torch.nn.ReLU(),
+                torch.nn.Linear(40, 80),
+                torch.nn.ReLU(),
+                torch.nn.Linear(80, 80),
+                torch.nn.ReLU(),
+                torch.nn.Linear(80, 40),
+                torch.nn.ReLU(),
+                torch.nn.Linear(40, 2)
+            )
+
         self.learning_rate = learning_rate
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
         self.loss_fn = MSE_loss
@@ -111,6 +137,9 @@ class SimpleNNApprox:
             index 0 corresponds to holding and index 1 corresponds to executing'
         '''
         self.model.eval()
+        print("=======\n\n")
+        print("Warning: Call Depracated, use forward instead")
+        print("\n\n=======")
         with torch.no_grad():
             x = featurize(currentState)
             q_values = self.forward(x)
