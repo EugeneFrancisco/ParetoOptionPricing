@@ -55,7 +55,9 @@ class SimpleNNApprox:
         print("Using device:", self.device)
         
         self.model = torch.nn.Sequential(
-            torch.nn.Linear(6, 10),
+            torch.nn.Linear(2, 10),
+            torch.nn.ReLU(),
+            torch.nn.Linear(10, 10),
             torch.nn.ReLU(),
             torch.nn.Linear(10, 10),
             torch.nn.ReLU(),

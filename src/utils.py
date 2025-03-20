@@ -39,23 +39,36 @@ def featurize(currentState: state) -> torch.Tensor:
     args:
         currentState: a state object representing the current state of the system.
     returns:
-        a torch.Tensor of shape (1, 6) representing the featurized state. Note that the returned tensor
+        a torch.Tensor of shape (1, 2) representing the featurized state. Note that the returned tensor
         is on the same device as the model. The features are:
-        [1, time, log(price), time^2, log(price)^2, time * log(price)]
+        [time, price]
     '''
 
-    time_horizon = 100
-    price_horizon = 100
-
+    
     return torch.tensor([
-        1,
-        currentState.time/time_horizon,
-        currentState.price/price_horizon,
-        (currentState.time/time_horizon) ** 2,
-        (currentState.price/price_horizon) ** 2,
-        (currentState.time * currentState.price)/(time_horizon * price_horizon)
+        currentState.time,
+        currentState.price
     ]).unsqueeze(0)
 
+def MSE_loss(predictions: torch.Tensor, target: torch.Tensor) -> float:
+    '''
+    Computes the mean squared error loss for the predicted Q values and the true Q values.
+    args:
+        predictions: a torch.Tensor of shape (n, alpha) representing the predicted Q values, where n is the
+        batch size and alpha is the number of actions.
+        target: a torch.Tensor of shape (n, alpha) representing the true Q values. Note that for each row of
+        target, only one entry is non-zero, corresponding to the action taken.
+        The non-zero entry should be the target Q value for the action taken.
+        The rest should be zero.
+    returns:
+        The mean squared error between the target Q value and the associated prediction value.
+    '''
+
+    nonzero_indices = target.nonzero(as_tuple=True)
+    pred_q_values = predictions[nonzero_indices]
+    target_q_values = target[nonzero_indices]
+    loss = torch.mean((pred_q_values - target_q_values) ** 2)
+    return loss
 
 def produce_trace(config: Mapping, distribution: Distribution)-> Iterable[float]:
     '''
@@ -110,25 +123,6 @@ def step_minibatch(
     new_prices = start_price + start_price*(driftRate*timeGap + (distribution.sample_n(batch_size) - mean) * timeGap)
     return new_prices
 
-def MSE_loss(predictions: torch.Tensor, target: torch.Tensor) -> float:
-    '''
-    Computes the mean squared error loss for the predicted Q values and the true Q values.
-    args:
-        predictions: a torch.Tensor of shape (n, alpha) representing the predicted Q values, where n is the
-        batch size and alpha is the number of actions.
-        target: a torch.Tensor of shape (n, alpha) representing the true Q values. Note that for each row of
-        target, only one entry is non-zero, corresponding to the action taken.
-        The non-zero entry should be the target Q value for the action taken.
-        The rest should be zero.
-    returns:
-        The mean squared error between the target Q value and the associated prediction value.
-    '''
-
-    nonzero_indices = target.nonzero(as_tuple=True)
-    pred_q_values = predictions[nonzero_indices]
-    target_q_values = target[nonzero_indices]
-    loss = torch.mean((pred_q_values - target_q_values) ** 2)
-    return loss
 
 def epsilon_scheduler(initial_epsilon: float, decay_rate: float, min_epsilon: float) -> Iterable[float]:
     '''

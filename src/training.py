@@ -1,4 +1,4 @@
-from utils import choose_epsilon_greedy, featurize, epsilon_scheduler
+from utils import choose_epsilon_greedy, featurize, epsilon_scheduler, choose_greedy
 from distributions import Distribution, NegatedParetoDistribution
 from function_approx import SimpleNNApprox, DummyQApprox
 from typing import Callable, Iterable, Mapping
@@ -58,13 +58,13 @@ def make_experience_trace(config: Mapping, distribution: Distribution, QFunction
         action = choose_epsilon_greedy(q_values, epsilon)
 
         x = featurize(current_state)
-        target = torch.zeros((1, 1))
+        target = torch.zeros((1, 2))
 
         if start_time == 0 or action == 1:
             # the terminal state.
             # we have to check if we entered because date expired or because we chose to execute.
             reward = 0 if action == 0 else start_price - strike_price
-            target[0][0] = reward
+            target[0][action] = reward
             X.append(x)
             targets.append(target)
             break
@@ -78,7 +78,7 @@ def make_experience_trace(config: Mapping, distribution: Distribution, QFunction
         next_state_features = next_state_features.to(default_device)
         next_state_q_values = QFunctionApprox.forward(next_state_features)
 
-        next_action = choose_epsilon_greedy(next_state_q_values, epsilon)
+        next_action = choose_greedy(next_state_q_values)
         target[0][0] = GAMMA * next_state_q_values[0][next_action].detach()
 
         X.append(x)
@@ -108,11 +108,11 @@ for i in range(500):
     QFunctionApprox.model.eval()
     QFunctionApprox.model.to(default_device)
 
-    with tqdm(total=4000, desc="Collecting Experience", unit="samples") as pbar:
-        while num_examples < 4000:
+    with tqdm(total=3000, desc="Collecting Experience", unit="samples") as pbar:
+        while num_examples < 3000:
             tasks = [{
                 'start_price': np.random.uniform(1, 21),
-                'start_time': np.random.randint(1, 21),
+                'start_time': np.random.randint(1, 11),
                 'strike_price': 10,
                 'driftRate': 0.005,
                 'timeGap': 1,
