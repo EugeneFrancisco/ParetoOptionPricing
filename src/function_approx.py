@@ -1,6 +1,7 @@
 import numpy as np
 from utils import MSE_loss, featurize
 import torch
+from torch import nn
 from abc import ABC, abstractmethod
 from state import state
 
@@ -54,43 +55,23 @@ class SimpleNNApprox:
         
         print("Using device:", self.device)
         
-        if fixed_alpha:
-            self.model = torch.nn.Sequential(
-                torch.nn.Linear(2, 30),
-                torch.nn.ReLU(),
-                torch.nn.Linear(30, 60),
-                torch.nn.ReLU(),
-                torch.nn.Linear(60, 30),
-                torch.nn.ReLU(),
-                torch.nn.Linear(30, 15),
-                torch.nn.ReLU(),
-                torch.nn.Linear(15, 2)
-            )
-        elif fixed_K and not fixed_alpha:
-            self.model = torch.nn.Sequential(
-                torch.nn.Linear(3, 40),
-                torch.nn.ReLU(),
-                torch.nn.Linear(40, 80),
-                torch.nn.ReLU(),
-                torch.nn.Linear(80, 40),
-                torch.nn.ReLU(),
-                torch.nn.Linear(40, 2)
-            )
-        elif not fixed_K and not fixed_alpha:
-            self.model = torch.nn.Sequential(
-                torch.nn.Linear(4, 40),
-                torch.nn.ReLU(),
-                torch.nn.Linear(40, 80),
-                torch.nn.ReLU(),
-                torch.nn.Linear(80, 80),
-                torch.nn.ReLU(),
-                torch.nn.Linear(80, 40),
-                torch.nn.ReLU(),
-                torch.nn.Linear(40, 2)
-            )
+        self.model = nn.Sequential(
+            nn.Linear(2, 64),
+            nn.ReLU(),
+            nn.BatchNorm1d(64),
+            nn.Linear(64, 128),
+            nn.ReLU(),
+            nn.BatchNorm1d(128),
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.BatchNorm1d(128),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, 2)
+        )
 
         self.learning_rate = learning_rate
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
+        self.optimizer = torch.optim.RMSprop(self.model.parameters(), lr=self.learning_rate, weight_decay=0.0001)
         self.loss_fn = MSE_loss
 
         self.model.to(self.device)

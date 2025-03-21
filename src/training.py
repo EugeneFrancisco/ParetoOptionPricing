@@ -11,12 +11,21 @@ from tqdm import tqdm
 from state import state
 import concurrent.futures
 import copy
+import os
 
-BATCH_SIZE = 1000
-NUM_EXPERIENCES = 4000
-NUM_ITERATIONS = 800
+BATCH_SIZE = 1024
+NUM_EXPERIENCES = 4096
+NUM_ITERATIONS = 1600
 GAMMA = 1/1.005
 NUM_TASKS = 36
+SAVE_FREQUENCY = 100
+TARGET_UPDATE_FREQUENCY = 50
+SAVE_PATH = "results/K35H40_trial1"
+RELOAD_PATH = "results/K30H40_trial1/target_1.pth"
+ALPHA = 2.0
+SCALE = 0.01
+TAU = 0.01
+MIN_REWARD = -1e8
 
 if torch.backends.mps.is_available():
     train_device = torch.device("mps")
@@ -24,6 +33,10 @@ else:
     train_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 default_device = torch.device("cpu")
+
+def soft_update(target_model, source_model, tau):
+    for target_param, source_param in zip(target_model.parameters(), source_model.parameters()):
+        target_param.data.copy_(tau * source_param.data + (1.0 - tau) * target_param.data)
 
 def make_experience_trace(
         config: Mapping, 
@@ -59,6 +72,10 @@ def make_experience_trace(
     targets = []
 
     while True:
+
+        if start_price == 0:
+            break
+
         x = featurize(
             time = start_time, 
             price = start_price,
@@ -69,19 +86,50 @@ def make_experience_trace(
         action = choose_epsilon_greedy(q_values, epsilon)
         target = torch.zeros((1, 2))
 
-        if start_time == 0 or action == 1:
-            # the terminal state.
-            # we have to check if we entered because date expired or because we chose to execute.
-            reward = 0 if action == 0 else start_price - strike_price
+        if start_time == 0:
+            raise ValueError("start_time should never be 0")
+            break
+            if action == 0:
+                reward = 0
+            else:
+                reward = max(start_price, 0) - strike_price
+
+            # min_clipping for stability
+            reward = max(reward, MIN_REWARD)
             target[0][action] = reward
             X.append(x)
             targets.append(target)
             break
-        
-        price_change = start_price*(driftRate * timeGap + (distribution.sample() - mean) * timeGap)
-        
-        new_price = price_change + start_price
+
+        if action == 1:
+            reward = start_price - strike_price
+            target[0][0] = reward
+            X.append(x)
+            targets.append(target)
+            break
+
+        # Now we must have chosen to hold
         new_time = start_time - timeGap
+        price_change = start_price*(driftRate * timeGap + (distribution.sample() - mean) * timeGap)
+        new_price = price_change + start_price
+
+        if new_time == 0:
+            # we just enforce the payout, assuming they act optimally
+            reward = max(0, new_price - strike_price)
+            target[0][0] = reward
+            X.append(x)
+            targets.append(target)
+            break
+        
+        # otherwise, the next_state is not terminal
+
+        if new_price <= 0:
+            # stocks can't be negative
+
+            target[0][0] = 0
+            X.append(x)
+            targets.append(target)
+            break
 
         next_state_features = featurize(
             new_time,
@@ -89,8 +137,10 @@ def make_experience_trace(
             strike_price = config['strike_price'] if not fixed_K else None
         )
 
-        next_state_features = next_state_features.to(default_device)
-        next_state_q_values = target_QFunctionApprox.forward(next_state_features)
+        if target_QFunctionApprox is not None:
+            next_state_q_values = target_QFunctionApprox.forward(next_state_features)
+        else:
+            next_state_q_values = QFunctionApprox.forward(next_state_features)
 
         next_action = choose_greedy(next_state_q_values)
         target[0][0] = GAMMA * next_state_q_values[0][next_action].detach()
@@ -108,35 +158,37 @@ def make_data_loader(
         config, 
         distribution, 
         QFunctionApprox, 
-        target_QFunction_Approx, 
-        iteration, 
-        fixed_K = True):
+        target_QFunctionApprox, 
+        iteration,
+        epsilon,
+        fixed_K = True
+        ):
     '''
     Makes a data loader by sampling experience traces for the given distribution and QFunctionApprox.
     iteration is used for any schedulers.
     '''
-    # time_upper_bound = [20, 40]
-    # time_lower_bound = [1, 1]
     
-    time_upper_bound = [40, 40]
-    time_lower_bound = [1, 1]
-    
-    eps_scheduler = epsilon_scheduler(0.1, 0.995, 0.01)
+    time_upper_bound = [21, 31, 41, 41]
+    time_lower_bound = [1, 1, 1, 1]
 
+    schedule = iteration/NUM_ITERATIONS
 
-    epsilon = next(eps_scheduler)
-    schedule = iteration/800
-
-    if schedule < 0.5:
+    if schedule < 0.25:
         up = time_upper_bound[0]
         low = time_lower_bound[0]
-    else:
+    elif schedule < 0.5:
         up = time_upper_bound[1]
         low = time_lower_bound[1]
+    elif schedule < 0.75:
+        up = time_upper_bound[2]
+        low = time_lower_bound[2]
+    else:
+        up = time_upper_bound[3]
+        low = time_lower_bound[3]
 
-    if iteration % 10 == 0:
+    if iteration % TARGET_UPDATE_FREQUENCY == 0 and target_QFunctionApprox is not None:
         # Copy over target dict once in a while
-        target_QFunction_Approx.model.load_state_dict(QFunctionApprox.model.state_dict())
+        target_QFunctionApprox.model.load_state_dict(QFunctionApprox.model.state_dict())
 
 
     X_list = [] # an n by d array of states that we've seen, where n is the number of states and d is the feature dimension of the states.
@@ -150,11 +202,18 @@ def make_data_loader(
     QFunctionApprox.model.eval()
     QFunctionApprox.model.to(default_device)
 
-    with tqdm(total=NUM_EXPERIENCES, desc="Collecting Experience", unit="samples") as pbar:
+    if target_QFunctionApprox is not None:
+        target_QFunctionApprox.model.eval()
+        target_QFunctionApprox.model.to(default_device)
+
+    with tqdm(total=NUM_EXPERIENCES, desc="Collecting Experience", unit="samples", leave=False) as pbar:
         while num_examples < NUM_EXPERIENCES:
             
             moneyNess = np.random.uniform(0.3, 1.5, size=NUM_TASKS)
-            start_prices = np.random.uniform(1, 21, size=NUM_TASKS)
+            if schedule < 0.5:
+                start_prices = np.random.uniform(0, 41, size=NUM_TASKS)
+            if schedule >= 0.5:
+                start_prices = np.random.uniform(10, 41, size=NUM_TASKS)
 
             tasks = [{
                 'start_price': start_prices[_],
@@ -171,7 +230,7 @@ def make_data_loader(
                     sampledConfig, 
                     distribution, 
                     QFunctionApprox,
-                    target_QFunction_Approx, 
+                    target_QFunctionApprox, 
                     fixed_K
                     ) for sampledConfig in tasks]
                 results = [future.result() for future in concurrent.futures.as_completed(futures)]
@@ -184,26 +243,39 @@ def make_data_loader(
                 pbar.update(num_in_this_experience)
 
     QFunctionApprox.model.to(train_device)
+
+    if target_QFunctionApprox is not None:
+        target_QFunctionApprox.model.to(train_device)
+
     X = torch.cat(X_list, dim=0).to(train_device)
     targets = torch.cat(targets_list, dim=0).to(train_device)
     dataset = TensorDataset(X, targets)
-    data_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+    data_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, drop_last=True)
 
     return data_loader
     
 
-def q_learning_fixed_K(config, QFunctionApprox, target_QFunctionApprox, fixed_K = True):
+def q_learning(config, QFunctionApprox, target_QFunctionApprox, fixed_K = True):
 
-    distribution = NegatedParetoDistribution(scale = 0.03, alpha = config['alpha'])
+    distribution = NegatedParetoDistribution(scale = SCALE, alpha = ALPHA)
+    eps_scheduler = epsilon_scheduler(0.1, 0.995, 0.01)
 
-    for i in range(NUM_ITERATIONS):
-        
-        data_loader = make_data_loader(config, distribution, QFunctionApprox, target_QFunctionApprox, i, fixed_K)
+    for i in tqdm(range(NUM_ITERATIONS), desc = "Training Progress"):
+
+        epsilon = next(eps_scheduler)
+        data_loader = make_data_loader(
+            config, 
+            distribution, 
+            QFunctionApprox, 
+            target_QFunctionApprox, 
+            i, 
+            epsilon, 
+            fixed_K)
 
         total_loss = 0
         count = 0
 
-        progress_bar = tqdm(data_loader, desc="Training Progress")
+        progress_bar = tqdm(data_loader, desc="Training Progress", leave=False)
 
         for x, target in progress_bar:
             count += 1
@@ -213,22 +285,42 @@ def q_learning_fixed_K(config, QFunctionApprox, target_QFunctionApprox, fixed_K 
         
         if i % 5 == 0:
             print(f"Iteration {i}: Loss = {total_loss / count}")
-    torch.save(QFunctionApprox.model.state_dict(), 'results/model.pth')
+        
+        #soft_update(target_QFunctionApprox.model, QFunctionApprox.model, TAU)
 
+        if i % SAVE_FREQUENCY == 0:
+            model_name = f"model_{i}.pth"
+            path_name = os.path.join(SAVE_PATH, model_name)
+            torch.save(QFunctionApprox.model.state_dict(), path_name)
+            print("model saved")
+        
+        if i % TARGET_UPDATE_FREQUENCY == 1:
+            model_name = f"target_{i}.pth"
+            path_name = os.path.join(SAVE_PATH, model_name)
+            torch.save(QFunctionApprox.model.state_dict(), path_name)
+            print("mtarget saved")
+    
+    path_name = os.path.join(SAVE_PATH, "model.pth")
+    torch.save(QFunctionApprox.model.state_dict(), path_name)
+    print("model saved")
+
+ReLoad = False
 QFunctionApprox = SimpleNNApprox(learning_rate=0.01, fixed_K = False, fixed_alpha = True)
+
+if ReLoad:
+    QFunctionApprox.model.load_state_dict(torch.load(RELOAD_PATH))
+
 target_QFunctionApprox = copy.deepcopy(QFunctionApprox)
 target_QFunctionApprox.model.eval()
 target_QFunctionApprox.model.to(default_device)
 
 config = {
-    'strike_price': 5.0,
-    'alpha': 2.0
+    'strike_price': 35.0
 }
 
-fixed_K = False
+fixed_K = True
 
-q_learning_fixed_K(config, QFunctionApprox, target_QFunctionApprox, fixed_K)
-
+q_learning(config, QFunctionApprox, target_QFunctionApprox, fixed_K = fixed_K)
 
 
     
