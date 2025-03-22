@@ -20,7 +20,7 @@ GAMMA = 1/1.005
 NUM_TASKS = 36
 SAVE_FREQUENCY = 100
 TARGET_UPDATE_FREQUENCY = 50
-SAVE_PATH = "results/K35H40_trial1"
+SAVE_PATH = "results"
 RELOAD_PATH = "results/K30H40_trial1/target_1.pth"
 ALPHA = 2.0
 SCALE = 0.01
@@ -315,7 +315,7 @@ target_QFunctionApprox.model.eval()
 target_QFunctionApprox.model.to(default_device)
 
 config = {
-    'strike_price': 35.0
+    'strike_price': 15.0
 }
 
 fixed_K = True
