@@ -6,7 +6,7 @@ from function_approx import SimpleNNApprox
 import torch
 
 # put the path to the model you want here
-PATH_NAME = "results/K25H40_trial1/model.pth"
+PATH_NAME = “results/model.pth”
 TIME_UPPER = 20
 
 device = torch.device("cpu")
