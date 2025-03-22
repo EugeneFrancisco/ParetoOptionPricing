@@ -168,7 +168,7 @@ def make_data_loader(
     iteration is used for any schedulers.
     '''
     
-    time_upper_bound = [21, 31, 41, 41]
+    time_upper_bound = [21, 21, 21, 21]
     time_lower_bound = [1, 1, 1, 1]
 
     schedule = iteration/NUM_ITERATIONS
